@@ -605,82 +605,19 @@ async def crawl_full(
     return results
 
 
-@mcp.tool()
-async def extract_with_llm(
-    urls: List[str],
-    instruction: str,
-    schema: str = None,
-    provider: str = None,
-) -> List[dict]:
-    """
-    Extrae datos estructurados de URLs usando un LLM via el contenedor crawl4ai.
-
-    Args:
-        urls: Lista de URLs a procesar.
-        instruction: Instruccion para el LLM sobre que extraer. Ej: "Extrae todos los productos con nombre y precio."
-        schema: Schema JSON opcional (como string) para estructurar la respuesta.
-        provider: Proveedor y modelo LLM. Ej: "openai/gpt-4o-mini". Si no se provee, usa el default del contenedor.
-
-    Returns:
-        Lista de datos extraidos por URL segun la instruccion del LLM.
-    """
-    http = get_http()
-    results = []
-    for url in urls:
-        try:
-            payload: Dict[str, Any] = {"url": url, "q": instruction}
-            if schema:
-                payload["schema"] = schema
-            if provider:
-                payload["provider"] = provider
-            resp = await http.post("/llm/job", json=payload)
-            resp.raise_for_status()
-            job = resp.json()
-            task_id = job.get("task_id")
-            if not task_id:
-                # Respuesta directa sin job queue
-                data = job
-            else:
-                # Polling hasta completar
-                import asyncio
-                for _ in range(60):  # max ~120s
-                    await asyncio.sleep(2)
-                    status_resp = await http.get(f"/llm/job/{task_id}")
-                    status_resp.raise_for_status()
-                    data = status_resp.json()
-                    if data.get("status") in ("completed", "failed"):
-                        break
-                else:
-                    results.append(StructuredResult(
-                        url=url, extracted_data=[{"error": "LLM job timed out"}],
-                    ).model_dump())
-                    continue
-
-            if data.get("status") == "failed":
-                results.append(StructuredResult(
-                    url=url,
-                    extracted_data=[{"error": data.get("error", "LLM extraction failed")}],
-                ).model_dump())
-                continue
-
-            # Extraer resultado
-            result_data = data.get("result", data)
-            if isinstance(result_data, str):
-                try:
-                    result_data = json.loads(result_data)
-                except (json.JSONDecodeError, TypeError):
-                    result_data = [{"raw_content": result_data}]
-            if isinstance(result_data, dict):
-                result_data = [result_data]
-            if not isinstance(result_data, list):
-                result_data = [{"raw_content": str(result_data)}]
-
-            results.append(StructuredResult(url=url, extracted_data=result_data).model_dump())
-        except Exception as e:
-            results.append(StructuredResult(
-                url=url, extracted_data=[{"error": str(e)}],
-            ).model_dump())
-    return results
+# @mcp.tool()
+# async def extract_with_llm(
+#     urls: List[str],
+#     instruction: str,
+#     schema: str = None,
+#     provider: str = None,
+# ) -> List[dict]:
+#     """
+#     Extrae datos estructurados de URLs usando un LLM via el contenedor crawl4ai.
+#     Requiere API key del LLM configurada en el contenedor.
+#     Descomentar cuando se quiera habilitar.
+#     """
+#     pass
 
 
 # ===========================
