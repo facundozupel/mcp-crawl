@@ -4,8 +4,7 @@ Expone herramientas de web crawling/scraping delegando al contenedor Docker
 de crawl4ai via su API REST. No requiere playwright ni browser local.
 """
 
-from fastmcp import FastMCP, Context
-from contextlib import asynccontextmanager
+from fastmcp import FastMCP
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel
 from starlette.middleware import Middleware
@@ -99,19 +98,22 @@ class FullCrawlResult(BaseModel):
 
 
 # ===========================
-# Lifespan: httpx client compartido
+# HTTP client global
 # ===========================
 
-@asynccontextmanager
-async def http_lifespan(server: FastMCP):
-    client = httpx.AsyncClient(
-        base_url=CRAWL4AI_BASE,
-        timeout=httpx.Timeout(HTTP_TIMEOUT),
-    )
-    try:
-        yield {"http": client}
-    finally:
-        await client.aclose()
+_http_client: httpx.AsyncClient | None = None
+
+
+def get_http() -> httpx.AsyncClient:
+    """Obtiene o crea el httpx client global."""
+    global _http_client
+    if _http_client is None:
+        _http_client = httpx.AsyncClient(
+            base_url=CRAWL4AI_BASE,
+            timeout=httpx.Timeout(HTTP_TIMEOUT),
+        )
+        print(f"[crawl4ai] HTTP client creado -> {CRAWL4AI_BASE}")
+    return _http_client
 
 
 mcp = FastMCP(
@@ -122,18 +124,12 @@ mcp = FastMCP(
         "Permite extraer markdown, links, media, tablas, datos estructurados (CSS/XPath), "
         "screenshots y extraccion con LLM de una o multiples URLs."
     ),
-    lifespan=http_lifespan,
 )
 
 
 # ===========================
 # Helpers
 # ===========================
-
-def get_http(ctx: Context) -> httpx.AsyncClient:
-    """Obtiene el httpx client del lifespan."""
-    return ctx.fastmcp._lifespan_result["http"]
-
 
 def limpiar_markdown(texto: str) -> str:
     """Limpia mensajes de debug de crawl4ai del markdown."""
@@ -225,7 +221,6 @@ def extract_crawl_result(data: dict, url: str) -> dict:
 
 @mcp.tool()
 async def crawl_markdown(
-    ctx: Context,
     urls: List[str],
     fit_markdown: bool = False,
 ) -> List[dict]:
@@ -239,7 +234,7 @@ async def crawl_markdown(
     Returns:
         Lista de resultados con raw_markdown y opcionalmente fit_markdown por cada URL.
     """
-    http = get_http(ctx)
+    http = get_http()
     results = []
     for url in urls:
         try:
@@ -273,7 +268,6 @@ async def crawl_markdown(
 
 @mcp.tool()
 async def crawl_links(
-    ctx: Context,
     urls: List[str],
     include_external: bool = True,
 ) -> List[dict]:
@@ -287,7 +281,7 @@ async def crawl_links(
     Returns:
         Lista con links internos/externos encontrados por URL.
     """
-    http = get_http(ctx)
+    http = get_http()
     results = []
     resp = await http.post("/crawl", json={"urls": urls})
     resp.raise_for_status()
@@ -311,7 +305,6 @@ async def crawl_links(
 
 @mcp.tool()
 async def crawl_media(
-    ctx: Context,
     urls: List[str],
     media_types: List[str] = None,
 ) -> List[dict]:
@@ -327,7 +320,7 @@ async def crawl_media(
     """
     if media_types is None:
         media_types = ["images", "videos", "audios"]
-    http = get_http(ctx)
+    http = get_http()
     resp = await http.post("/crawl", json={"urls": urls})
     resp.raise_for_status()
     data = resp.json()
@@ -355,7 +348,6 @@ async def crawl_media(
 
 @mcp.tool()
 async def crawl_tables(
-    ctx: Context,
     urls: List[str],
 ) -> List[dict]:
     """
@@ -367,7 +359,7 @@ async def crawl_tables(
     Returns:
         Lista con tablas encontradas por URL, cada tabla con headers y rows.
     """
-    http = get_http(ctx)
+    http = get_http()
     resp = await http.post("/crawl", json={"urls": urls})
     resp.raise_for_status()
     data = resp.json()
@@ -389,7 +381,6 @@ async def crawl_tables(
 
 @mcp.tool()
 async def crawl_screenshot(
-    ctx: Context,
     url: str,
     screenshot_wait_for: float = 2,
 ) -> dict:
@@ -403,7 +394,7 @@ async def crawl_screenshot(
     Returns:
         Objeto con url y screenshot_base64.
     """
-    http = get_http(ctx)
+    http = get_http()
     try:
         resp = await http.post("/screenshot", json={
             "url": url,
@@ -419,7 +410,6 @@ async def crawl_screenshot(
 
 @mcp.tool()
 async def crawl_structured_css(
-    ctx: Context,
     urls: List[str],
     schema: dict,
 ) -> List[dict]:
@@ -434,7 +424,7 @@ async def crawl_structured_css(
     Returns:
         Lista de datos extraidos por URL segun el schema CSS.
     """
-    http = get_http(ctx)
+    http = get_http()
     crawler_config = {
         "extraction_strategy": {
             "type": "JsonCssExtractionStrategy",
@@ -465,7 +455,6 @@ async def crawl_structured_css(
 
 @mcp.tool()
 async def crawl_structured_xpath(
-    ctx: Context,
     urls: List[str],
     schema: dict,
 ) -> List[dict]:
@@ -480,7 +469,7 @@ async def crawl_structured_xpath(
     Returns:
         Lista de datos extraidos por URL segun el schema XPath.
     """
-    http = get_http(ctx)
+    http = get_http()
     crawler_config = {
         "extraction_strategy": {
             "type": "JsonXPathExtractionStrategy",
@@ -511,7 +500,6 @@ async def crawl_structured_xpath(
 
 @mcp.tool()
 async def crawl_with_js(
-    ctx: Context,
     url: str,
     js_code: str,
     wait_for: str = None,
@@ -527,7 +515,7 @@ async def crawl_with_js(
     Returns:
         Markdown resultado tras ejecutar el JS, junto con links y media disponibles.
     """
-    http = get_http(ctx)
+    http = get_http()
     try:
         # /execute_js devuelve un CrawlResult completo con markdown
         resp = await http.post("/execute_js", json={
@@ -551,7 +539,6 @@ async def crawl_with_js(
 
 @mcp.tool()
 async def crawl_full(
-    ctx: Context,
     urls: List[str],
 ) -> List[dict]:
     """
@@ -563,7 +550,7 @@ async def crawl_full(
     Returns:
         Lista con resultado completo (markdown, links, media, tablas, status_code) por URL.
     """
-    http = get_http(ctx)
+    http = get_http()
     resp = await http.post("/crawl", json={"urls": urls})
     resp.raise_for_status()
     data = resp.json()
@@ -620,7 +607,6 @@ async def crawl_full(
 
 @mcp.tool()
 async def extract_with_llm(
-    ctx: Context,
     urls: List[str],
     instruction: str,
     schema: str = None,
@@ -638,7 +624,7 @@ async def extract_with_llm(
     Returns:
         Lista de datos extraidos por URL segun la instruccion del LLM.
     """
-    http = get_http(ctx)
+    http = get_http()
     results = []
     for url in urls:
         try:
