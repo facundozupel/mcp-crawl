@@ -512,36 +512,77 @@ async def crawl_with_js(
     wait_for: str = None,
 ) -> dict:
     """
-    Crawlea una URL ejecutando JavaScript personalizado antes de extraer contenido.
+    Ejecuta JavaScript en una pagina y devuelve el resultado + markdown.
+    El JS puede retornar datos (strings, arrays, objetos) que seran capturados.
 
     Args:
         url: URL a crawlear.
-        js_code: Codigo JavaScript a ejecutar en la pagina. Ej: "document.querySelector('.load-more').click();"
+        js_code: Codigo JavaScript a ejecutar. Puede usar return para devolver datos.
+            Ej accion: "document.querySelector('.load-more').click();"
+            Ej extraccion: "return Array.from(document.querySelectorAll('h1,h2,h3')).map(h => ({tag: h.tagName, text: h.textContent.trim()}));"
         wait_for: Selector CSS opcional para esperar antes de extraer. Ej: "div.results"
 
     Returns:
-        Markdown resultado tras ejecutar el JS, junto con links y media disponibles.
+        Objeto con url, js_result (resultado del JS), raw_markdown, success, error.
     """
     http = get_http()
     try:
-        # /execute_js devuelve un CrawlResult completo con markdown
+        # Envolver el JS del usuario para capturar el return value en el DOM
+        wrapper_js = (
+            "var __r = (function() { " + js_code + " })();"
+            "var __el = document.createElement('pre');"
+            "__el.id = '__mcp_js_result__';"
+            "__el.style.display = 'none';"
+            "__el.textContent = typeof __r === 'string' ? __r : JSON.stringify(__r);"
+            "document.body.appendChild(__el);"
+        )
         resp = await http.post("/execute_js", json={
             "url": url,
-            "scripts": [js_code],
+            "scripts": [wrapper_js],
         })
         resp.raise_for_status()
         data = resp.json()
-        if data.get("success"):
-            md = data.get("markdown", {})
-            raw = limpiar_markdown(md.get("raw_markdown", "") if isinstance(md, dict) else str(md))
-            return MarkdownResult(url=url, raw_markdown=raw).model_dump()
-        else:
-            return MarkdownResult(
-                url=url, success=False,
-                error=data.get("error_message", "JS execution failed"),
-            ).model_dump()
+
+        # Extraer el resultado JS del HTML
+        js_result = None
+        html = data.get("html", "")
+        match = re.search(
+            r'<pre[^>]*id=["\']__mcp_js_result__["\'][^>]*>(.*?)</pre>',
+            html,
+            re.DOTALL,
+        )
+        if match:
+            raw_result = match.group(1).strip()
+            try:
+                js_result = json.loads(raw_result)
+            except (json.JSONDecodeError, TypeError):
+                js_result = raw_result
+
+        # Extraer markdown tambien
+        md = data.get("markdown", {})
+        raw_md = ""
+        if isinstance(md, dict):
+            raw_md = limpiar_markdown(md.get("raw_markdown", ""))
+        elif isinstance(md, str):
+            raw_md = limpiar_markdown(md)
+
+        print(f"[crawl4ai] JS ejecutado en {url}, resultado: {type(js_result).__name__}")
+        return {
+            "url": url,
+            "js_result": js_result,
+            "raw_markdown": raw_md,
+            "success": True,
+            "error": None,
+        }
     except Exception as e:
-        return MarkdownResult(url=url, success=False, error=str(e)).model_dump()
+        print(f"[crawl4ai] Error crawl_with_js {url}: {e}")
+        return {
+            "url": url,
+            "js_result": None,
+            "raw_markdown": "",
+            "success": False,
+            "error": str(e),
+        }
 
 
 @mcp.tool()
