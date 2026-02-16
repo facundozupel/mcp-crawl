@@ -605,6 +605,56 @@ async def crawl_full(
     return results
 
 
+@mcp.tool()
+async def crawl_schema_org(
+    urls: List[str],
+) -> List[dict]:
+    """
+    Extrae los datos estructurados JSON-LD (schema.org) de una o mas URLs.
+    Busca todos los <script type="application/ld+json"> en el HTML.
+
+    Args:
+        urls: Lista de URLs de las que extraer schema.org.
+
+    Returns:
+        Lista con los objetos JSON-LD encontrados por URL.
+    """
+    http = get_http()
+    results = []
+    for url in urls:
+        try:
+            resp = await http.post("/execute_js", json={
+                "url": url,
+                "scripts": [],
+            })
+            resp.raise_for_status()
+            data = resp.json()
+            html = data.get("html", "")
+            # Extraer todos los <script type="application/ld+json">
+            scripts = re.findall(
+                r'<script[^>]*type=["\']application/ld\+json["\'][^>]*>(.*?)</script>',
+                html,
+                re.DOTALL,
+            )
+            schemas = []
+            for script in scripts:
+                try:
+                    parsed = json.loads(script.strip())
+                    schemas.append(parsed)
+                except (json.JSONDecodeError, TypeError):
+                    schemas.append({"raw": script.strip()})
+            print(f"[crawl4ai] {url} -> {len(schemas)} JSON-LD encontrados")
+            results.append({
+                "url": url,
+                "schemas": schemas,
+                "total": len(schemas),
+            })
+        except Exception as e:
+            print(f"[crawl4ai] Error schema_org {url}: {e}")
+            results.append({"url": url, "schemas": [], "total": 0, "error": str(e)})
+    return results
+
+
 # @mcp.tool()
 # async def extract_with_llm(
 #     urls: List[str],
