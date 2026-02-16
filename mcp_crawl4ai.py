@@ -419,7 +419,11 @@ async def crawl_structured_css(
     Args:
         urls: Lista de URLs a crawlear.
         schema: Schema de extraccion CSS para JsonCssExtractionStrategy.
-            Ejemplo: {"baseSelector": "div.product", "fields": [{"name": "title", "selector": "h2", "type": "text"}]}
+            IMPORTANTE: No usar ":self" como selector, no es soportado.
+            Para extraer texto/atributos del propio baseSelector, omitir el campo "selector" en fields.
+
+            Ejemplo links: {"baseSelector": "a[href]", "fields": [{"name": "text", "type": "text"}, {"name": "href", "type": "attribute", "attribute": "href"}]}
+            Ejemplo productos: {"baseSelector": "div.product", "fields": [{"name": "title", "selector": "h2", "type": "text"}, {"name": "price", "selector": ".price", "type": "text"}]}
 
     Returns:
         Lista de datos extraidos por URL segun el schema CSS.
@@ -464,7 +468,10 @@ async def crawl_structured_xpath(
     Args:
         urls: Lista de URLs a crawlear.
         schema: Schema de extraccion XPath para JsonXPathExtractionStrategy.
-            Ejemplo: {"baseSelector": "//div[@class='product']", "fields": [{"name": "title", "selector": ".//h2/text()", "type": "text"}]}
+            Para extraer texto/atributos del propio baseSelector, omitir "selector" en fields.
+
+            Ejemplo links: {"baseSelector": "//a[@href]", "fields": [{"name": "text", "type": "text"}, {"name": "href", "type": "attribute", "attribute": "href"}]}
+            Ejemplo productos: {"baseSelector": "//div[@class='product']", "fields": [{"name": "title", "selector": ".//h2/text()", "type": "text"}]}
 
     Returns:
         Lista de datos extraidos por URL segun el schema XPath.
